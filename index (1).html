@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Puffs">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<title>Puff Counter</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; background:#000; color-scheme:dark; }
+  body {
+    background:#000; color:#f2f7f5;
+    font-family:'Avenir Next','Segoe UI',system-ui,-apple-system,sans-serif;
+    display:flex; flex-direction:column;
+    padding:calc(env(safe-area-inset-top) + 20px) 20px calc(env(safe-area-inset-bottom) + 24px);
+    user-select:none; -webkit-user-select:none;
+    overscroll-behavior:none;
+  }
+  .header { display:flex; justify-content:space-between; align-items:flex-start; }
+  .eyebrow { font-size:12px; letter-spacing:.18em; color:#8fd8c9; font-weight:600; margin-bottom:4px; }
+  .dim { font-size:13px; color:#7d8794; }
+  .reset-btn {
+    background:none; border:1px solid #232c36; color:#7d8794;
+    border-radius:999px; padding:6px 14px; font-size:12px; cursor:pointer;
+  }
+  .tap-zone {
+    position:relative; flex:1; min-height:300px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; margin:12px 0 4px;
+  }
+  .tap-zone svg { position:absolute; }
+  .center { text-align:center; z-index:1; }
+  .big { font-size:64px; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; margin-bottom:8px; transition:color .25s; }
+  .big.over { color:#ff6b5e; }
+  .tap-hint { font-size:11px; color:#4a5561; margin-top:10px; letter-spacing:.08em; }
+  .stats {
+    display:flex; gap:8px; padding:16px 0;
+    border-top:1px solid #171d24; border-bottom:1px solid #171d24; margin:8px 0 16px;
+  }
+  .stat { text-align:center; flex:1; }
+  .stat-value { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat-label { font-size:11px; color:#7d8794; margin-top:2px; }
+  .undo-btn {
+    background:#0e1319; border:1px solid #232c36; color:#eef4f2;
+    border-radius:12px; padding:14px; font-size:15px; cursor:pointer; width:100%;
+  }
+  .undo-btn:disabled { opacity:.4; }
+  .footnote { font-size:12px; color:#4a5561; text-align:center; margin-top:12px; line-height:1.5; }
+  .ring-fg { transition:stroke-dashoffset .25s ease, stroke .25s ease; }
+  .pop { animation:pop .18s ease; }
+  @keyframes pop { from { transform:scale(.96);} to { transform:scale(1);} }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="eyebrow" id="dayLabel">DAY 1 OF 30</div>
+      <div class="dim" id="monthLabel"></div>
+    </div>
+    <button class="reset-btn" id="resetBtn">reset</button>
+  </div>
+
+  <div class="tap-zone" id="tapZone">
+    <svg width="300" height="300" viewBox="0 0 300 300">
+      <circle cx="150" cy="150" r="128" fill="none" stroke="#161c22" stroke-width="10"/>
+      <circle id="ring" class="ring-fg" cx="150" cy="150" r="128" fill="none"
+        stroke="#8fd8c9" stroke-width="10" stroke-linecap="round"
+        transform="rotate(-90 150 150)"/>
+    </svg>
+    <div class="center" id="centerBox">
+      <div class="big" id="bigNum">0</div>
+      <div class="dim" id="subLabel"></div>
+      <div class="tap-hint">tap anywhere to count</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-value" id="statTotal">0</div><div class="stat-label">total used</div></div>
+    <div class="stat"><div class="stat-value" id="statDaysLeft">30</div><div class="stat-label">days left</div></div>
+    <div class="stat"><div class="stat-value" id="statOnBudget">0</div><div class="stat-label">days on budget</div></div>
+  </div>
+
+  <button class="undo-btn" id="undoBtn">&minus; undo last puff</button>
+  <div class="footnote">One drag = one tap &middot; 700/day &times; 30 days = 21,000 &middot; resets at midnight<br>Data is stored on this phone only.</div>
+
+<script>
+(function(){
+  var DAILY = 700, PLAN_DAYS = 30, PLAN_TOTAL = DAILY * PLAN_DAYS;
+  var KEY = "puffState";
+  var C = 2 * Math.PI * 128;
+
+  function todayKey(){
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function daysBetween(a,b){ return Math.floor((new Date(b) - new Date(a)) / 86400000); }
+
+  function load(){
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e){}
+    return { startDate: todayKey(), days: {} };
+  }
+  function save(s){
+    try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e){}
+  }
+
+  var state = load();
+
+  // Support one-tap counting via shortcut: opening ...?add=1 logs a puff
+  if (window.location.search.indexOf("add=1") !== -1) {
+    var tk0 = todayKey();
+    state.days[tk0] = (state.days[tk0] || 0) + 1;
+    save(state);
+    // strip the param so refreshing doesn't double-count
+    try { history.replaceState(null, "", window.location.pathname); } catch(e){}
+  }
+  var $ = function(id){ return document.getElementById(id); };
+  var ring = $("ring");
+  ring.setAttribute("stroke-dasharray", C);
+
+  function render(){
+    var tk = todayKey();
+    var today = state.days[tk] || 0;
+    var total = 0;
+    for (var k in state.days) total += state.days[k];
+    var dayNum = Math.min(daysBetween(state.startDate, tk) + 1, PLAN_DAYS);
+    if (dayNum < 1) dayNum = 1;
+    var daysLeft = Math.max(PLAN_DAYS - dayNum, 0);
+    var planRemaining = Math.max(PLAN_TOTAL - total, 0);
+    var left = DAILY - today;
+    var over = left < 0;
+    var onBudget = 0;
+    for (var k2 in state.days){
+      if (k2 !== tk && state.days[k2] <= DAILY) onBudget++;
+    }
+    $("dayLabel").textContent = "DAY " + dayNum + " OF " + PLAN_DAYS;
+    $("monthLabel").textContent = planRemaining.toLocaleString() + " of " + PLAN_TOTAL.toLocaleString() + " left this month";
+    $("bigNum").textContent = today.toLocaleString();
+    $("bigNum").className = "big" + (over ? " over" : "");
+    $("subLabel").textContent = over
+      ? Math.abs(left).toLocaleString() + " over today's " + DAILY
+      : left.toLocaleString() + " left of " + DAILY;
+    $("statTotal").textContent = total.toLocaleString();
+    $("statDaysLeft").textContent = daysLeft;
+    $("statOnBudget").textContent = onBudget;
+    var pct = Math.min(today / DAILY, 1);
+    ring.setAttribute("stroke-dashoffset", C * (1 - pct));
+    ring.setAttribute("stroke", over ? "#ff6b5e" : "#8fd8c9");
+    $("undoBtn").disabled = today === 0;
+  }
+
+  $("tapZone").addEventListener("click", function(){
+    var tk = todayKey();
+    state.days[tk] = (state.days[tk] || 0) + 1;
+    save(state); render();
+    var box = $("centerBox");
+    box.classList.remove("pop"); void box.offsetWidth; box.classList.add("pop");
+  });
+
+  $("undoBtn").addEventListener("click", function(e){
+    e.stopPropagation();
+    var tk = todayKey();
+    if ((state.days[tk] || 0) > 0){
+      state.days[tk]--; save(state); render();
+    }
+  });
+
+  $("resetBtn").addEventListener("click", function(e){
+    e.stopPropagation();
+    if (confirm("Start over? This clears all counts.")){
+      state = { startDate: todayKey(), days: {} };
+      save(state); render();
+    }
+  });
+
+  // re-render at midnight / when app reopens
+  document.addEventListener("visibilitychange", function(){ if (!document.hidden) render(); });
+  setInterval(render, 60000);
+
+  render();
+})();
+</script>
+</body>
+</html>
